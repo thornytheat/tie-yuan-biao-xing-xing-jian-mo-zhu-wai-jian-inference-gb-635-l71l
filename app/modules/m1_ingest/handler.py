@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
-from ... import config, errors, reasons
+from ... import config, errors, reasons, rulepacks
 from ...web import Ctx, get_ctx, render
 from ..m3_profile import quarantine as quarantine_mod
 from ..m5_batches import service as batch_service
@@ -18,7 +18,7 @@ router = APIRouter(tags=["M1 元数据接入"])
 VALID_SOURCES = ("sample",)
 
 
-def _params(payload: dict | None) -> tuple[str, dict]:
+def _params(payload: dict | None) -> tuple[str, dict, str | None]:
     payload = payload or {}
     source = str(payload.get("source") or "sample")
     if source not in VALID_SOURCES:
@@ -31,13 +31,21 @@ def _params(payload: dict | None) -> tuple[str, dict]:
         raise errors.BadRequest("sample_cap 必须是整数", code="E_BAD_REQUEST") from None
     if not 1 <= cap <= 5000:
         raise errors.BadRequest("sample_cap 必须在 1..5000 之间", code="E_BAD_REQUEST")
-    return source, {"sample_cap": cap}
+    # 显式版本先校验注册表：未登记直接 422，不静默回退
+    raw_version = payload.get("rule_version")
+    rule_version = str(raw_version).strip() if raw_version else None
+    if rule_version:
+        rulepacks.get(rule_version)
+    return source, {"sample_cap": cap}, rule_version
 
 
 @router.post("/api/import")
 def api_import(payload: dict | None = None, ctx: Ctx = Depends(get_ctx)) -> dict:
-    source, params = _params(payload)
-    result = batch_service.run(settings=ctx.settings, store=ctx.store, source=source,
+    source, params, rule_version = _params(payload)
+    from dataclasses import replace
+    settings = (replace(ctx.settings, rule_version=rule_version)
+                if rule_version else ctx.settings)
+    result = batch_service.run(settings=settings, store=ctx.store, source=source,
                               params=params)
     if not result.get("replayed"):
         result["quarantine_total"] = int(

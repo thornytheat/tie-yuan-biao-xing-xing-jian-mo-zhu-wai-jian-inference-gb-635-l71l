@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from ... import config, errors
+from ... import config, errors, rulepacks
 from . import coerce, contract, evolve
 
 router = APIRouter(tags=["M2 类型规则"])
@@ -15,10 +15,19 @@ VALID_KINDS = {"code", "int", "bigint", "decimal", "date", "timestamp", "text"}
 
 
 @router.get("/api/contract")
-def get_contract() -> dict:
-    document = contract.document()
+def get_contract(rule_version: str | None = None) -> dict:
+    document = contract.document(rule_version)
     document["evolve_rules"] = evolve.rule_rows()
     return document
+
+
+@router.get("/api/rule-packs")
+def get_rule_packs() -> dict:
+    """规则包目录：页面核对当前版本与历史版本的渠道归一差异。"""
+    return {
+        "current_version": rulepacks.CURRENT_VERSION,
+        "rows": rulepacks.catalog(),
+    }
 
 
 @router.post("/api/contract/probe")
@@ -30,6 +39,10 @@ def probe(payload: dict) -> dict:
     if kind and kind not in VALID_KINDS:
         raise errors.BadRequest(f"kind 只能是 {sorted(VALID_KINDS)} 之一",
                                 code="E_BAD_REQUEST")
+    # 版本缺失在这里就 422，不静默退回最新版
+    requested_version = payload.get("rule_version")
+    pack = (rulepacks.get(str(requested_version)) if requested_version
+            else rulepacks.current())
     values = [str(item) for item in raw_values]
     column = str(payload.get("column") or "").strip()
     width = int(payload.get("width") or 0)
@@ -43,7 +56,7 @@ def probe(payload: dict) -> dict:
         if state != "value":
             rejected.append({"raw": value, "code": "Q_SENTINEL_VALUE", "state": state})
             continue
-        canonical, _ = coerce.alias_of(value, column)
+        canonical, _ = coerce.alias_of(value, column, pack)
         if kind == "code":
             text, code = coerce.normalize_code(value, width)
             normalized.append(text)
@@ -86,4 +99,6 @@ def probe(payload: dict) -> dict:
         "rejected": rejected,
         "codes": sorted(set(codes)),
         "contract_version": contract.CONTRACT_VERSION,
+        "rule_version": pack.version,
+        "channel_note": pack.channel_note,
     }

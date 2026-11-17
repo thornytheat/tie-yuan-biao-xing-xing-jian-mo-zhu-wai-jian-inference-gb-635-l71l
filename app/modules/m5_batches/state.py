@@ -1,6 +1,7 @@
 """批次状态：批次号、批次键、阶段计数行。
 
 批次键只由输入摘要 + 规则版本 + 参数决定；批次号额外带时间戳，便于人读。
+批次创建时把受理所用规则版本钉在批次行上，续跑只认这个版本，外部配置切换不影响它。
 """
 from __future__ import annotations
 
@@ -10,8 +11,13 @@ from ... import config, manifest
 
 
 def new_batch(*, batch_key_value: str, input_digest: str, source: str,
-              params: dict, resume_of: str | None = None) -> dict:
+              params: dict, rule_version: str,
+              resume_of: str | None = None, existing_ids: set | None = None) -> dict:
+    # 秒级时间戳后接短随机尾：同秒受理两版规则也不会撞批次号（主键冲突会直接丢批次）
     batch_id = f"SM{dt.datetime.now(config.UTC).strftime('%Y%m%d%H%M%S')}"
+    existing_ids = existing_ids or set()
+    if batch_id in existing_ids:
+        batch_id = f"{batch_id}-{manifest.new_run_id().split('-')[-1]}"
     return {
         "batch_id": batch_id,
         "batch_key": batch_key_value,
@@ -23,6 +29,7 @@ def new_batch(*, batch_key_value: str, input_digest: str, source: str,
         "input_digest": input_digest,
         "resume_of": resume_of,
         "params": dict(params),
+        "rule_version": rule_version,
         "note": "",
     }
 

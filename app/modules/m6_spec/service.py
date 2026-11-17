@@ -43,14 +43,18 @@ def evidence_csv(document: dict) -> bytes:
 
 
 def manifest_json(document: dict) -> bytes:
+    manifest = document.get("manifest") or {}
     payload = {
         "run_id": document["batch"]["run_id"],
         "batch_id": document["batch"]["batch_id"],
         "batch_key": document["batch"]["batch_key"],
-        "input_digest": (document.get("manifest") or {}).get("input_digest", ""),
-        "inputs": (document.get("manifest") or {}).get("inputs", []),
-        "params": (document.get("manifest") or {}).get("params", {}),
-        "counters": (document.get("manifest") or {}).get("counters", {}),
+        "rule_version": manifest.get("rule_version", ""),
+        "rule_pack": manifest.get("rule_pack", {}),
+        "resume_policy": manifest.get("resume_policy", ""),
+        "input_digest": manifest.get("input_digest", ""),
+        "inputs": manifest.get("inputs", []),
+        "params": manifest.get("params", {}),
+        "counters": manifest.get("counters", {}),
         "accounts": document.get("accounts"),
     }
     return json_out.encode(json_out.dumps(payload, indent=2))

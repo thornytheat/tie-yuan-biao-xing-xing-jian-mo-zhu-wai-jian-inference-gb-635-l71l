@@ -67,13 +67,16 @@ def test_evidence_csv_lists_quarantine_rows(client_with_run):
 
 
 def test_manifest_json_keeps_inputs_and_counters(client_with_run):
-    """运行清单 JSON 可复算：run_id、输入摘要、参数、计数。"""
+    """运行清单 JSON 可复算：run_id、输入摘要、参数、计数、钉版规则。"""
     export = client_with_run.get("/api/spec/manifest.json")
     payload = json.loads(export.content.decode("utf-8"))
     assert payload["run_id"].startswith("SM-")
     assert len(payload["inputs"]) == 3
     assert payload["counters"]["columns_total"] == str(X.COLUMN_TOTAL)
     assert payload["accounts"]["balanced"] is True
+    assert payload["rule_version"].startswith("starmodel/")
+    assert payload["rule_pack"]["rule_version"] == payload["rule_version"]
+    assert payload["resume_policy"]
 
 
 def test_footnotes_numbered_and_match_pages(client_with_run):

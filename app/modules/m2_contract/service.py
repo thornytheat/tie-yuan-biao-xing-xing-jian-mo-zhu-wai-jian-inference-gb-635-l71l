@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from ... import config, reasons
+from ... import config, reasons, rulepacks
 from ..m1_ingest import sniff
 from . import coerce, evolve
 
@@ -84,6 +84,7 @@ class Coerced:
     tables: list = field(default_factory=list)
     quarantine: list = field(default_factory=list)
     codes: list = field(default_factory=list)
+    rule_version: str = ""
 
     def table(self, name: str) -> TableRun | None:
         lowered = name.lower()
@@ -104,7 +105,7 @@ def _q(code, *, table=None, column=None, row_ref=None, raw_value=None, detail=No
 
 
 def _normalize(kind: str, value: str, width: int,
-               column_name: str = "") -> tuple[str | None, list]:
+               column_name: str = "", pack=None) -> tuple[str | None, list]:
     codes: list[str] = []
     if kind == "code":
         text, code = coerce.normalize_code(value, width)
@@ -131,7 +132,7 @@ def _normalize(kind: str, value: str, width: int,
         if parsed is None:
             return None, [code or "Q_BAD_DATE"]
         return parsed.strftime("%Y-%m-%d %H:%M:%S"), codes
-    canonical, merged = coerce.alias_of(value, column_name)
+    canonical, merged = coerce.alias_of(value, column_name, pack)
     if merged:
         codes.append("K_ALIAS_MERGED")
     return canonical, codes
@@ -151,7 +152,10 @@ def _widen_kind(declared: str, kind: str) -> str:
 
 
 def build(intake, settings=None) -> Coerced:
+    # 规则包在入口一次性解析：版本未登记直接拒绝，不允许在归一中途静默换版
+    pack = rulepacks.current(settings)
     result = Coerced()
+    result.rule_version = pack.version
     convergences = evolve.converge_types(intake.ddl)
     for table_def in intake.ddl.tables:
         header_map = evolve.map_headers(table_def, intake.header(table_def.name))
@@ -237,7 +241,7 @@ def build(intake, settings=None) -> Coerced:
                     continue
                 column.raw_values.append(cell.strip())
                 normalized, codes = _normalize(kind, cell, column.pad_width,
-                                               column_def.name)
+                                               column_def.name, pack)
                 if normalized is None:
                     column.unparsable += 1
                     column.codes.extend(codes)
@@ -288,7 +292,7 @@ def build(intake, settings=None) -> Coerced:
                         raw_value=column.sample_value,
                         detail=f"按字符串保存，阈值 2^53 = {2 ** 53}"))
         table.valid_rows = valid_cells
-        table.rows_norm = _normalized_rows(table, header_map, valid_cells)
+        table.rows_norm = _normalized_rows(table, header_map, valid_cells, pack)
         result.tables.append(table)
     result.codes = sorted(set(result.codes))
     return result
@@ -302,7 +306,7 @@ def _row_total(intake, table_name: str) -> int:
     return len(section.rows) + len(section.short_rows) + len(section.long_rows)
 
 
-def _normalized_rows(table, header_map, valid_cells) -> list:
+def _normalized_rows(table, header_map, valid_cells, pack=None) -> list:
     """对齐后的归一取值矩阵：空值、哨兵、不可解析一律 None。"""
     rows = []
     for cells in valid_cells:
@@ -316,7 +320,8 @@ def _normalized_rows(table, header_map, valid_cells) -> list:
             if coerce.classify_raw(cell) != "value":
                 row[column.name] = None
                 continue
-            value, _codes = _normalize(column.kind, cell, column.pad_width, column.name)
+            value, _codes = _normalize(column.kind, cell, column.pad_width,
+                                       column.name, pack)
             row[column.name] = value
         rows.append(row)
     return rows

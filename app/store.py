@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS batches (
     input_digest TEXT NOT NULL,
     resume_of TEXT,
     params_json TEXT NOT NULL DEFAULT '{}',
-    note TEXT NOT NULL DEFAULT ''
+    note TEXT NOT NULL DEFAULT '',
+    rule_version TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_batches_key ON batches(batch_key, status);
 CREATE TABLE IF NOT EXISTS tables_meta (
@@ -98,7 +99,22 @@ CREATE TABLE IF NOT EXISTS totals (
 CREATE TABLE IF NOT EXISTS manifests (
     batch_id TEXT PRIMARY KEY, json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS stage_checkpoints (
+    batch_id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    rule_version TEXT NOT NULL,
+    input_digest TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (batch_id, stage)
+);
 """
+
+# 老库升级：batches 表补规则版本列。历史批次没有钉版信息时给空串，
+# 由读取方决定是否按兼容规则处理，绝不在这里偷偷写成最新版。
+_MIGRATIONS = (
+    "ALTER TABLE batches ADD COLUMN rule_version TEXT NOT NULL DEFAULT ''",
+)
 
 
 class Store:
@@ -106,7 +122,24 @@ class Store:
         self.path = str(path)
         Path(self.path).resolve().parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
+            # 顺序很重要：旧库的 batches 已存在但缺列，必须先补列，
+            # 否则 SCHEMA 里引用新列的建索引语句会让整段脚本在新表之前中断
+            self._migrate(conn)
             conn.executescript(SCHEMA)
+
+    def _migrate(self, conn) -> None:
+        # 全新库还没有 batches 表：SCHEMA 会直接建出含全部新列的表，无需迁移
+        existing_tables = {row[0] for row in
+                           conn.execute("SELECT name FROM sqlite_master "
+                                        "WHERE type IN ('table')")}
+        if "batches" not in existing_tables:
+            return
+        existing = {row["name"] for row in
+                    conn.execute("PRAGMA table_info(batches)").fetchall()}
+        for statement in _MIGRATIONS:
+            column = statement.split("ADD COLUMN", 1)[1].strip().split()[0]
+            if column not in existing:
+                conn.execute(statement)
 
     @contextmanager
     def connect(self):
@@ -126,16 +159,18 @@ class Store:
         with self.connect() as conn:
             conn.execute(
                 """INSERT INTO batches (batch_id, batch_key, run_id, source, status,
-                        created_at, finished_at, input_digest, resume_of, params_json, note)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                        created_at, finished_at, input_digest, resume_of, params_json,
+                        note, rule_version)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(batch_id) DO UPDATE SET
                      status=excluded.status, finished_at=excluded.finished_at,
-                     input_digest=excluded.input_digest, note=excluded.note""",
+                     input_digest=excluded.input_digest, note=excluded.note,
+                     rule_version=excluded.rule_version""",
                 (batch["batch_id"], batch["batch_key"], batch["run_id"], batch["source"],
                  batch["status"], batch["created_at"], batch.get("finished_at"),
                  batch["input_digest"], batch.get("resume_of"),
                  json.dumps(batch.get("params", {}), ensure_ascii=False),
-                 batch.get("note", "")),
+                 batch.get("note", ""), batch.get("rule_version", "")),
             )
 
     def find_done_by_key(self, batch_key: str) -> dict | None:
@@ -278,16 +313,18 @@ class Store:
                 (batch_id, json.dumps(manifest, ensure_ascii=False)))
             conn.execute(
                 """INSERT INTO batches (batch_id, batch_key, run_id, source, status,
-                        created_at, finished_at, input_digest, resume_of, params_json, note)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                        created_at, finished_at, input_digest, resume_of, params_json,
+                        note, rule_version)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(batch_id) DO UPDATE SET
                      status=excluded.status, finished_at=excluded.finished_at,
-                     note=excluded.note, input_digest=excluded.input_digest""",
+                     note=excluded.note, input_digest=excluded.input_digest,
+                     rule_version=excluded.rule_version""",
                 (batch_id, batch["batch_key"], batch["run_id"], batch["source"],
                  batch["status"], batch["created_at"], batch.get("finished_at"),
                  batch["input_digest"], batch.get("resume_of"),
                  json.dumps(batch.get("params", {}), ensure_ascii=False),
-                 batch.get("note", "")))
+                 batch.get("note", ""), batch.get("rule_version", "")))
 
     # ---------- 读取 ----------
     def load_tables(self, batch_id: str) -> list[dict]:
@@ -374,6 +411,64 @@ class Store:
                                (batch_id,)).fetchone()
         return json.loads(row["json"]) if row else None
 
+    # ---------- 阶段检查点（中断续跑） ----------
+    def save_checkpoint(self, *, batch_id: str, stage: str, rule_version: str,
+                        input_digest: str, payload: dict) -> None:
+        """落一个阶段检查点；同批次同阶段重复写只覆盖，不新增行（续跑幂等）。"""
+        import datetime as dt
+        from . import config as _config
+        created_at = dt.datetime.now(_config.UTC).isoformat(timespec="seconds")
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO stage_checkpoints (batch_id, stage, rule_version,
+                        input_digest, payload_json, created_at)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(batch_id, stage) DO UPDATE SET
+                     payload_json=excluded.payload_json,
+                     input_digest=excluded.input_digest,
+                     rule_version=excluded.rule_version,
+                     created_at=excluded.created_at""",
+                (batch_id, stage, rule_version, input_digest,
+                 json.dumps(payload, ensure_ascii=False, default=_json_default),
+                 created_at),
+            )
+
+    def load_checkpoint(self, batch_id: str, stage: str) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM stage_checkpoints WHERE batch_id=? AND stage=?",
+                (batch_id, stage)).fetchone()
+        if row is None:
+            return None
+        return {"stage": row["stage"], "rule_version": row["rule_version"],
+                "input_digest": row["input_digest"], "created_at": row["created_at"],
+                "payload": json.loads(row["payload_json"])}
+
+    def list_checkpoints(self, batch_id: str) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT stage, rule_version, input_digest, created_at "
+                "FROM stage_checkpoints WHERE batch_id=? ORDER BY rowid",
+                (batch_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_checkpoints(self, batch_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM stage_checkpoints WHERE batch_id=?", (batch_id,))
+
+    def upsert_stage_row(self, batch_id: str, stage: dict) -> None:
+        """增量写一条阶段计数行；同批次同阶段覆盖，保证重复续跑不新增结果。"""
+        with self.connect() as conn:
+            conn.execute("DELETE FROM stages WHERE batch_id=? AND stage=?",
+                         (batch_id, stage["stage"]))
+            conn.execute(
+                """INSERT INTO stages (batch_id, stage, in_count, out_count,
+                        quarantine_count, status, elapsed_ms, note)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (batch_id, stage["stage"], stage["in_count"], stage["out_count"],
+                 stage["quarantine_count"], stage["status"], stage["elapsed_ms"],
+                 stage.get("note", "")))
+
     def count_rows(self, batch_id: str) -> dict:
         with self.connect() as conn:
             return {
@@ -391,3 +486,14 @@ class Store:
 
 def _dec(text: str) -> Decimal:
     return Decimal(text)
+
+
+def _json_default(obj):
+    """检查点 JSON 兜底：dataclass 转字典，Decimal 转字符串，其余让 json 报错。"""
+    from dataclasses import asdict, is_dataclass
+
+    if is_dataclass(obj):
+        return asdict(obj)
+    if isinstance(obj, Decimal):
+        return str(obj)
+    raise TypeError(f"检查点里出现不可序列化的对象：{type(obj)!r}")

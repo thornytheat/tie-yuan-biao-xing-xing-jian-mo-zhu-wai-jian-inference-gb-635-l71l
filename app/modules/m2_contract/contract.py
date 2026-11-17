@@ -1,11 +1,11 @@
 """列契约：可选类型清单、类型判定规则表、阈值与空值哨兵清单。
 
 契约是「数字与时间的定义」的唯一落点，页面和规格单直接引用这里的行，
-不在模板里另写一份。
+不在模板里另写一份。别名等价类按规则版本取自 app.rulepacks，不再写死在本模块。
 """
 from __future__ import annotations
 
-from ... import config
+from ... import config, rulepacks
 
 CONTRACT_VERSION = "spec/1.0"
 
@@ -30,8 +30,9 @@ TYPE_RULES = (
      "detail": f"阈值 2^53 = {2 ** 53}"},
     {"id": "R-TYP-5", "title": "日期三种写法都归一",
      "detail": "年/月/日、年-月-日、年月日；带时分秒的判时间戳"},
-    {"id": "R-TYP-6", "title": "别名词表只有登记过的列生效",
-     "detail": "当前登记列：" + "、".join(sorted(config.ALIAS_COLUMNS))},
+    {"id": "R-TYP-6", "title": "别名词表按规则版本生效，只有登记过的列合并",
+     "detail": "当前登记列：" + "、".join(sorted(rulepacks.current().alias_columns))
+               + "；规则目录见 /api/rule-packs"},
 )
 
 THRESHOLDS = (
@@ -55,7 +56,9 @@ DISPOSITION_RULES = (
 )
 
 
-def document() -> dict:
+def document(rule_version: str | None = None) -> dict:
+    pack = (rulepacks.get(rule_version) if rule_version
+            else rulepacks.current())
     return {
         "contract_version": CONTRACT_VERSION,
         "kinds": list(KINDS),
@@ -63,6 +66,10 @@ def document() -> dict:
         "thresholds": list(THRESHOLDS),
         "disposition_rules": list(DISPOSITION_RULES),
         "sentinels": sorted(config.SENTINELS),
-        "aliases": {key: list(value) for key, value in config.ALIAS_GROUPS.items()},
-        "rule_version": config.RULE_VERSION,
+        "aliases": {key: list(value) for key, value in pack.alias_groups.items()},
+        "alias_columns": sorted(pack.alias_columns),
+        "channel_note": pack.channel_note,
+        "rule_version": pack.version,
+        "available_rule_versions": rulepacks.available_versions(),
+        "current_rule_version": rulepacks.CURRENT_VERSION,
     }

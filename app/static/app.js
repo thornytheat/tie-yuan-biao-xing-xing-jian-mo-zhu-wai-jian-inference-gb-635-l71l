@@ -45,19 +45,25 @@
     if (state.running) {
       return;
     }
-    const form = button.closest("form");
+    const form = button.closest("form") || button.closest(".toolbar");
     const source = form ? form.querySelector("[name=source]").value : "sample";
     const capField = form ? form.querySelector("[name=sample_cap]") : null;
+    const versionField = form ? form.querySelector("[name=rule_version]") : null;
     const sampleCap = capField ? Number(capField.value) : 500;
+    const ruleVersion = versionField ? versionField.value : "";
     state.running = true;
     button.disabled = true;
     button.textContent = "运行中";
     clearNotice();
     try {
-      const body = await postJSON("/api/import", {
+      const payload = {
         source: source,
         sample_cap: sampleCap,
-      });
+      };
+      if (ruleVersion) {
+        payload.rule_version = ruleVersion;
+      }
+      const body = await postJSON("/api/import", payload);
       const replayed = body.replayed ? "复用" : "新批次";
       showNotice(`${replayed} ${body.batch_id}`, "ok");
       window.setTimeout(() => window.location.reload(), 320);

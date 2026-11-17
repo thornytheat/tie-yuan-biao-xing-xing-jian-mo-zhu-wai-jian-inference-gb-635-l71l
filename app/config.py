@@ -18,7 +18,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CHINA_TZ = dt.timezone(dt.timedelta(hours=8), "Asia/Shanghai")
 UTC = dt.timezone.utc
 
-RULE_VERSION = "starmodel/1.0.0"
+# 当前规则版本：新批次默认按它取规则包；旧批次按各自钉版运行，不受这里切换影响。
+# 规则包内容（别名等价类等）统一登记在 app/rulepacks.py，这里只留版本号与历史快照。
+RULE_VERSION = "starmodel/1.1.0"
+# 历史版本：老批次受理时的版本，保留常量仅用于说明与迁移期核对
+LEGACY_RULE_VERSIONS = ("starmodel/1.0.0",)
 DECIMAL_QUANT = Decimal("0.01")
 MIN_SAMPLE_ROWS = 3
 MAX_SAMPLE_ROWS_PER_TABLE = 500
@@ -82,7 +86,10 @@ TYPE_WIDTH = {
     "timestamp": 2,
 }
 
-# 别名等价类：键是代表元，值是该主体的其他写法；代表元与输入顺序无关
+# 别名等价类已迁移到 app/rulepacks.py 的版本化规则包：
+# - v1 starmodel/1.0.0：门店 = (门店POS, pos) 合并；
+# - v2 starmodel/1.1.0：门店POS / pos 不再并入门店，分别计数。
+# 下列两个常量只保留 v1 历史快照，供迁移期文档引用；运行期一律走 rulepacks.get(版本)。
 ALIAS_GROUPS = {
     "APP": ("app", "App", "APP端", "app端"),
     "小程序": ("微信小程序", "微信小程序端"),
@@ -116,7 +123,9 @@ class Settings:
         base = cls()
         db_path = os.getenv("STARMODEL_DB") or base.db_path
         sample_dir = os.getenv("STARMODEL_SAMPLE_DIR") or base.sample_dir
-        return replace(cls(), db_path=db_path, sample_dir=sample_dir)
+        rule_version = os.getenv("STARMODEL_RULE_VERSION") or base.rule_version
+        return replace(cls(), db_path=db_path, sample_dir=sample_dir,
+                       rule_version=rule_version)
 
     @property
     def data_dir(self) -> Path:

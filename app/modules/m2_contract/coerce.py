@@ -122,17 +122,16 @@ def parse_timestamp(value: str) -> tuple[dt.datetime | None, str | None]:
     return None, "Q_BAD_DATE"
 
 
-def alias_of(value: str, column_name: str) -> tuple[str, bool]:
-    """同一主体的多个写法合并到代表元；只看登记过的列，其余原样返回。"""
-    if column_name.lower() not in config.ALIAS_COLUMNS:
-        return value, False
-    stripped = (value or "").strip()
-    for canonical, variants in config.ALIAS_GROUPS.items():
-        if stripped == canonical or stripped in variants:
-            return canonical, stripped != canonical
-        if stripped.lower() == canonical.lower():
-            return canonical, stripped != canonical
-    return stripped, False
+def alias_of(value: str, column_name: str, pack=None) -> tuple[str, bool]:
+    """同一主体的多个写法合并到代表元；只看登记过的列，其余原样返回。
+
+    pack 为规则包快照（app.rulepacks.RulePack）：批次钉哪版就用哪版，
+    不传时退回全局当前规则包，保证旧调用方与单列试跑仍可用。
+    """
+    if pack is None:
+        from ... import rulepacks
+        pack = rulepacks.current()
+    return pack.alias_of(value, column_name)
 
 
 def is_big_integer(values: list[str]) -> bool:

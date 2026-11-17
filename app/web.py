@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
-from . import config, reasons
+from . import config, reasons, rulepacks
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -119,6 +119,7 @@ def setup(app) -> None:
         role_labels=config.ROLE_LABELS,
         scd_labels=config.SCD_LABELS,
         rule_version=config.RULE_VERSION,
+        rule_packs=rulepacks.catalog(),
         money_unit="元",
         qty_unit="件",
         timezone_label="Asia/Shanghai (+08:00)",

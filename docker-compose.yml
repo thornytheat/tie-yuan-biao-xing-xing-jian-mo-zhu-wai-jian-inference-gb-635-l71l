@@ -5,6 +5,7 @@ services:
     environment:
       STARMODEL_DB: /data/starmodel.sqlite
       STARMODEL_SAMPLE_DIR: /app/sample_data
+      STARMODEL_RULE_VERSION: starmodel/1.1.0
       TZ: Asia/Shanghai
     ports:
       - "18204:8000"

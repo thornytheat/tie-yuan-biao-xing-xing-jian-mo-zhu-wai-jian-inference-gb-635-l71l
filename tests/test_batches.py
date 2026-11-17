@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import manifest
+from app import config, manifest
 from app.modules.m5_batches import service as batch_service, state
 from app.modules.m7_impact import service as impact_service
 from fixtures import expected as X
@@ -60,7 +60,8 @@ def test_manifest_records_inputs_and_digest(run, store):
     for item in doc["inputs"]:
         assert len(item["sha256"]) == 64
     assert len(doc["input_digest"]) == 64
-    assert doc["rule_version"] == "starmodel/1.0.0"
+    assert doc["rule_version"] == config.RULE_VERSION
+    assert doc["rule_pack"]["rule_version"] == config.RULE_VERSION
     assert doc["params"]["sample_cap"] == 500
     assert doc["replayable"].startswith("同 batch_key")
 

@@ -17,7 +17,7 @@
   </div>
   <dl class="metaline">
     <div><dt>批次</dt><dd>{{ batch.batch_id if batch else '—' }}</dd></div>
-    <div><dt>规则版本</dt><dd>{{ rule_version }}</dd></div>
+    <div><dt>规则版本</dt><dd>{{ batch.rule_version if batch and batch.rule_version else rule_version }}</dd></div>
     <div><dt>生成</dt><dd>{{ generated_at }}</dd></div>
     <div><dt>时区</dt><dd>{{ timezone_label }}</dd></div>
   </dl>
@@ -35,7 +35,7 @@
   {% block main %}{% endblock %}
 </main>
 <footer class="colophon">
-  <span>starmodel · {{ rule_version }}</span>
+  <span>starmodel · 当前 {{ rule_version }}</span>
   <span>{{ batch.run_id if batch else '—' }}</span>
 </footer>
 <script src="/static/app.js"></script>

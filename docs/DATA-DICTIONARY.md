@@ -93,6 +93,33 @@
 - `input_digest` = sha256(按文件名排序后的「文件名:sha256」序列)。
 - 同一 `batch_key` 且状态为 `done` 时重跑直接复用，不新增行。
 
+### 7.1 规则版本钉版
+
+- 规则包登记在 `app/rulepacks.py`，版本号一经登记内容冻结；升级只发新版本，不覆盖旧版本。
+- 当前版本由 `config.RULE_VERSION`（可用环境变量 `STARMODEL_RULE_VERSION` 覆盖）决定，
+  只作用于**新批次**；新批次可在 `/api/import` 用 `rule_version` 显式指定任一已登记版本。
+- 批次受理时把版本钉在 `batches.rule_version` 与运行清单 `manifest.rule_pack` 上；
+  中断续跑只认钉版，外部配置切换不影响旧批次。
+- 请求的版本未登记时返回 422 `B_RULE_PACK_MISSING`，绝不静默回退到最新版。
+- 渠道归一差异：
+  - `starmodel/1.0.0`：`门店POS`、`pos` 并入代表元 `门店`（合并计数）；
+  - `starmodel/1.1.0`：`门店POS`、`pos` 不再并入 `门店`，三个取值分别计数；
+    APP、小程序两组等价类两版一致。
+- 同输入、同参数、不同规则版本得到不同 `batch_key`，旧版恢复与新批次可并发、各用各的规则。
+
+### 7.2 阶段检查点与续跑
+
+- 五个阶段 `import / contract / profile / keys / spec`，每完成一段立即写一条
+  `stages` 计数行和一份 `stage_checkpoints` 检查点（含该阶段产物快照与钉版、输入摘要）。
+- 中断后批次留 `aborted`；`POST /api/batches/{id}/resume` 从水位（最后完成阶段）的
+  下一段继续，沿用原批次号、原 `run_id`、原账目与钉版规则，不另建任务。
+- 续跑会重读源文件只做摘要核对：摘要变化时标记 `source_changed` 并在批次备注说明，
+  已完成阶段仍按受理时检查点恢复，不重算。
+- 检查点与阶段行按 `(batch_id, stage)` 覆盖写，重复续跑不新增结果；已完成批次续跑返回
+  409 `B_IDEMPOTENT_REPLAY`。
+- 老库升级：`batches` 自动补 `rule_version` 列（历史批次为空串，不代写最新版），
+  并新建 `stage_checkpoints` 表，迁移可重复执行。
+
 ## 8 空态三态
 
 | 情形 | 结论 |

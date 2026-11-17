@@ -170,6 +170,15 @@ REASONS = {
     "B_EMPTY": _r(
         "B_EMPTY", ERROR, "batches",
         "还没有任何批次", "先跑一次接入"),
+    "B_RULE_PACK_MISSING": _r(
+        "B_RULE_PACK_MISSING", ERROR, "batches",
+        "批次钉版的规则包未登记，拒绝执行", "补登记该版本或切回存在的版本，不会静默套最新版"),
+    "B_RESUMED": _r(
+        "B_RESUMED", INFO, "batches",
+        "中断批次从已完成阶段的下一段续跑", "沿用原批次号、run_id 与原账目，不另建任务"),
+    "B_SOURCE_CHANGED": _r(
+        "B_SOURCE_CHANGED", WARN, "batches",
+        "续跑时发现源文件已替换，已完成阶段按受理时快照保留", "核对输入摘要，必要时用新输入另建新批次"),
     # ---- M6 规格单 ----
     "X_EMPTY_SELECTION": _r(
         "X_EMPTY_SELECTION", WARN, "spec",

@@ -62,4 +62,5 @@ def build(*, run_id: str, batch_id: str, batch_key_value: str, settings,
         "counters": counters,
         "decimals": "金额与用量为 Decimal，最小刻度 0.01",
         "replayable": "同 batch_key 重跑返回同一批次",
+        "resume_policy": "中断后按批次钉版规则从最后完成阶段续跑，不另建任务",
     }

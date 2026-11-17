@@ -3,12 +3,45 @@
 
 {% block main %}
 <section class="section">
+  <h2>规则版本目录</h2>
+  <p class="hint">新批次按当前版本受理；中断批次续跑一律沿用批次钉版，规则缺失时拒绝执行，不套最新版。</p>
+  <div class="wide">
+    <table class="spec dense">
+      <thead>
+        <tr><th>规则版本</th><th>说明</th><th>渠道归一</th><th>别名等价类</th><th>状态</th></tr>
+      </thead>
+      <tbody>
+        {% for pack in payload.rule_packs %}
+        <tr>
+          <td class="mono">{{ pack.rule_version }}</td>
+          <td>{{ pack.label }}</td>
+          <td class="hint">{{ pack.channel_note }}</td>
+          <td class="mono">
+            {% for canonical, variants in pack.alias_groups.items() %}
+            {{ canonical }} ← {{ variants | join('、') }}{% if not loop.last %}；{% endif %}
+            {% endfor %}
+          </td>
+          <td>
+            {% if pack.is_current %}
+            <span class="flag" data-tone="ok">当前版本</span>
+            {% else %}
+            <span class="flag" data-tone="warn">历史版本</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section">
   <h2>批次历史</h2>
   <div class="wide">
     <table class="spec" data-sortable>
-      <caption>同一输入摘要重跑复用同一批次</caption>
+      <caption>同一输入摘要 + 同一规则版本重跑复用同一批次；续跑沿用原批次号与原账目</caption>
       <thead>
-        <tr><th>批次</th><th>状态</th><th>输入摘要</th><th class="num">列</th><th class="num">对象</th><th class="num">隔离</th><th>开始</th><th>run_id</th></tr>
+        <tr><th>批次</th><th>状态</th><th>规则版本</th><th>输入摘要</th><th class="num">列</th><th class="num">对象</th><th class="num">隔离</th><th>开始</th><th>run_id</th><th>操作</th></tr>
       </thead>
       <tbody>
         {% for row in payload.rows %}
@@ -17,22 +50,61 @@
           <td>
             <span class="flag" data-tone="{{ 'ok' if row.status == 'done' else ('warn' if row.status == 'running' else 'bad') }}">{{ row.status_label }}</span>
           </td>
+          <td class="mono">{{ row.rule_version or '—' }}</td>
           <td class="mono">{{ row.input_digest }}</td>
           <td class="num">{{ row.counts.columns_meta or 0 }}</td>
           <td class="num">{{ row.counts.star_objects or 0 }}</td>
           <td class="num">{{ row.counts.quarantine or 0 }}</td>
           <td class="mono">{{ row.created_at }}</td>
           <td class="mono"><span class="truncate" title="{{ row.run_id }}">{{ row.run_id }}</span></td>
+          <td>
+            {% if row.status in ('aborted', 'running') %}
+            <button type="button" data-action="resume" data-batch="{{ row.batch_id }}">续跑</button>
+            {% else %}
+            <span class="hint">—</span>
+            {% endif %}
+          </td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="empty">还没有批次。</td></tr>
+        <tr><td colspan="10" class="empty">还没有批次。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="notice" data-notice hidden></p>
+</section>
+
+{% if payload.accounts %}
+<section class="section">
+  <h2>本批次规则与恢复位置</h2>
+  <dl class="pairs">
+    <div><dt>钉版规则</dt><dd class="mono">{{ payload.manifest.rule_version or rule_version }}</dd></div>
+    <div><dt>渠道规则</dt><dd>{{ payload.manifest.rule_pack.channel_note if payload.manifest.rule_pack else '—' }}</dd></div>
+    <div><dt>恢复水位</dt><dd class="mono">{{ payload.watermark.stage or '—' }}（序号 {{ payload.watermark.index }}，已出 {{ payload.watermark.out }} 条）</dd></div>
+    <div><dt>检查点数</dt><dd class="num">{{ payload.checkpoints | length }} / {{ stages | length }}</dd></div>
+  </dl>
+  <div class="wide">
+    <table class="spec dense">
+      <caption>阶段检查点：每完成一段立即落盘，中断后从下一段续跑</caption>
+      <thead>
+        <tr><th>阶段</th><th>规则版本</th><th>输入摘要</th><th>落盘时间</th></tr>
+      </thead>
+      <tbody>
+        {% for cp in payload.checkpoints %}
+        <tr>
+          <td>{{ stage_labels.get(cp.stage, cp.stage) }}</td>
+          <td class="mono">{{ cp.rule_version }}</td>
+          <td class="mono">{{ cp.input_digest[:12] }}</td>
+          <td class="mono">{{ cp.created_at | replace('T', ' ') }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="empty">还没有检查点。</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </section>
 
-{% if payload.accounts %}
 <section class="section">
   <h2>四账核对</h2>
   <div class="wide">
@@ -91,6 +163,7 @@
     <div><dt>规则版本</dt><dd>{{ payload.manifest.rule_version or rule_version }}</dd></div>
     <div><dt>样本上限</dt><dd>{{ payload.manifest.params.sample_cap if payload.manifest.params else '—' }}</dd></div>
     <div><dt>耗时 ms</dt><dd>{{ payload.manifest.elapsed_ms or '—' }}</dd></div>
+    <div><dt>续跑策略</dt><dd>{{ payload.manifest.resume_policy or '—' }}</dd></div>
   </dl>
 </section>
 {% else %}
@@ -99,4 +172,8 @@
   <p class="empty">还没有批次。</p>
 </section>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/batches.js"></script>
 {% endblock %}

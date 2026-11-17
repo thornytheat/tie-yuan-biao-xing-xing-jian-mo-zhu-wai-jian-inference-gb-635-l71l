@@ -12,6 +12,8 @@
 - 星型建议：事实 / 维度 / 待定、SCD 类型、退化维度
 - 隔离区与冲突表可导出 CSV，运行清单可导出 JSON
 - 同输入重跑幂等；四账（列 / 行 / 引用 / 对象）自洽
+- 规则包版本化冻结：渠道归一分 `starmodel/1.0.0`（POS 并入门店）与 `starmodel/1.1.0`（POS 分别计数），新批次用当前版、批次受理即钉版，版本缺失明确拒绝不套最新版
+- 五阶段检查点：中断后按批次钉版从已完成阶段的下一段续跑，沿用原批次号 / run_id / 账目；源文件被替换只标记不重算已完成段，重复续跑不新增结果
 - 变更前评估：下游 SQL 与报表影响面、迁移拓扑序、回滚提示与阻断项
 
 ## 模块
@@ -19,10 +21,10 @@
 | 模块 | 动作 | 入口 |
 |---|---|---|
 | M1 元数据接入 | 读 DDL 与样本，切分段，逐行诊断 | `POST /api/import` |
-| M2 类型规则 | 列契约、阈值、单列归一化试跑 | `GET /api/contract` `POST /api/contract/probe` |
+| M2 类型规则 | 列契约、阈值、单列归一化试跑、规则包目录 | `GET /api/contract` `GET /api/rule-packs` `POST /api/contract/probe` |
 | M3 质量剖析 | 列剖析、隔离区、四账对账 | `GET /api/profile` `GET /api/quarantine` `GET /api/reconcile` |
 | M4 键推断与建议 | 主键外键结论、星型对象 | `GET /api/model` |
-| M5 版本与重跑 | 批次历史、批次详情、续跑 | `GET /api/batches` `POST /api/batches/{id}/resume` |
+| M5 版本与重跑 | 批次历史、批次详情、续跑、检查点核对 | `GET /api/batches` `GET /api/batches/{id}` `POST /api/batches/{id}/resume` |
 | M6 规格单导出 | 规格单、列规格 CSV、证据 CSV、清单 JSON | `GET /api/spec` |
 | M7 建模影响评估 | 变更影响面、迁移顺序、回滚提示、单条变更试算 | `GET /api/impact` `POST /api/impact/propose` |
 
@@ -39,6 +41,34 @@
 
 数字化定义与字段含义见 `docs/DATA-DICTIONARY.md`，陷阱与测试映射见 `docs/DEPTH.md`。
 
+## 规则版本与中断续跑
+
+规则包在 `app/rulepacks.py` 登记，版本号一旦登记内容即冻结，升级只发新版本：
+
+| 版本 | 渠道归一（`channel` 列） |
+|---|---|
+| `starmodel/1.0.0` | `门店POS`、`pos` 并入代表元 `门店`，合并计数 |
+| `starmodel/1.1.0`（当前） | `门店POS`、`pos` 不再并入 `门店`，分别计数；APP、小程序等价类不变 |
+
+- **新批次用当前版**：默认按 `config.RULE_VERSION`，也可在接入时传 `rule_version` 显式选版；
+  同输入两版产生不同批次键，旧版恢复与新批次可并发、各用各的规则。
+- **批次受理即钉版**：版本写进批次行与运行清单；中断续跑只认钉版，外部配置切换不影响旧批次。
+- **规则缺失明确拒绝**：请求未登记版本返回 422 `B_RULE_PACK_MISSING`，绝不静默套最新版。
+- **检查点续跑**：五个阶段每完成一段立即落检查点；中断后续跑从水位下一段继续，沿用原批次号、
+  原 `run_id`、原账目，不另建任务。源文件被替换时重读只核对摘要并标记 `source_changed`，
+  已完成阶段按受理时快照保留。重复续跑不新增结果，已完成批次续跑返回 409。
+- 批次页（`/batches`）可核对每批钉版规则、渠道归一说明、检查点清单与恢复水位。
+
+```bash
+# 显式用旧版受理一批（与当前版批次并存）
+curl -s -X POST http://127.0.0.1:18204/api/import -H 'Content-Type: application/json' \
+  -d '{"source":"sample","rule_version":"starmodel/1.0.0"}'
+# 中断批次续跑（沿用钉版与原批次号）
+curl -s -X POST http://127.0.0.1:18204/api/batches/SM20261117122908/resume
+# 查看规则包目录
+curl -s http://127.0.0.1:18204/api/rule-packs
+```
+
 ## 启动
 
 ```bash
@@ -53,6 +83,7 @@ open http://127.0.0.1:18204/
 curl -s -X POST http://127.0.0.1:18204/api/import -H 'Content-Type: application/json' -d '{"source":"sample"}'
 ```
 
+可用环境变量 `STARMODEL_RULE_VERSION` 切换新批次默认规则版本（只影响新批次，不动已受理批次）。
 重建数据库：`docker compose down -v` 后重新 `up`（数据在命名卷 `starmodel-data`）。
 
 本地跑测试：
